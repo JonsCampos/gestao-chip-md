@@ -1,0 +1,12 @@
+# Dependências do Composer
+/vendor/
+
+# Banco de dados SQLite (evita conflitos e exposição de dados reais)
+*.db
+*.sqlite
+*.sqlite3
+
+# Arquivos do sistema e editores
+.DS_Store
+Thumbs.db
+.vscode/
