@@ -36,8 +36,10 @@ if ($realizou_busca) {
     $total_paginas = ceil($total_registros / $itens_por_pagina);
 
     // SQL COM ORDENAÇÃO DUPLA
+    // data_evento = última movimentação qualquer; data_status = última mudança de STATUS (usada no "volta em")
     $sql = "SELECT c.*, e.nome as nome_equipe, e.id as id_equipe,
-            (SELECT data_hora FROM logs WHERE alvo_tipo = 'chip' AND alvo_id = c.id ORDER BY id DESC LIMIT 1) as data_evento
+            (SELECT data_hora FROM logs WHERE alvo_tipo = 'chip' AND alvo_id = c.id ORDER BY id DESC LIMIT 1) as data_evento,
+            (SELECT data_hora FROM logs WHERE alvo_tipo = 'chip' AND alvo_id = c.id AND UPPER(acao) IN ('STATUS','BANIU','DESCARTOU','RETORNOU') ORDER BY id DESC LIMIT 1) as data_status
             FROM chips c 
             LEFT JOIN equipes e ON c.equipe_id = e.id 
             WHERE $sql_filtros
@@ -53,27 +55,16 @@ if ($realizou_busca) {
 }
 $equipes = $db->query("SELECT * FROM equipes ORDER BY nome ASC")->fetchAll(PDO::FETCH_ASSOC);
 
-$css_padrao = "
-<style>
-    .card-custom-header { background-color: #212529; color: white; padding: 10px 15px; }
-    .table-padrao th { background-color: #212529; color: white; vertical-align: middle; border: 1px solid #32383e; text-align: center; }
-    .table-padrao td { vertical-align: middle; border: 1px solid #dee2e6; background-color: white; text-align: center; }
-    .fw-medium { font-weight: 500; }
-    .badge-status { font-size: 0.85em; padding: 6px 10px; }
-    .btn-action { margin-right: 5px; }
-    .td-equipe { text-align: left !important; padding-left: 15px !important; }
-</style>
-";
 ?>
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
     <title>Painel - Gestão de Chips</title>
-    <link rel="icon" href="icone.png" type="image/png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <?= $css_padrao ?>
+    <link rel="icon" href="assets/img/icone.png" type="image/png">
+    <link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="assets/style.css">
 </head>
 <body class="bg-light">
 
@@ -81,7 +72,7 @@ $css_padrao = "
     <div class="container position-relative">
         
         <a class="navbar-brand fw-bold fs-5" href="painel.php">
-            <img src="logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
+            <img src="assets/img/logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
             Gestão de Chips
         </a>
 
@@ -184,11 +175,12 @@ $css_padrao = "
                                                 <span class="text-muted small ms-2"><i class="far fa-clock"></i> <?= date('d/m H:i', strtotime($res['data_evento'])) ?></span>
                                                 
                                                 <?php 
-                                                    // CÁLCULO VOLTA EM (SPAM/ANALISE)
+                                                    // CÁLCULO VOLTA EM (SPAM/ANALISE) - parte da última mudança de STATUS
                                                     if (($st == 'spam' || $st == 'analise')) {
                                                         $horas = (float)($res['horas_penalidade'] ?? 0);
                                                         if ($horas > 0) {
-                                                            $volta = strtotime($res['data_evento']) + ($horas * 3600);
+                                                            $base_volta = !empty($res['data_status']) ? $res['data_status'] : $res['data_evento'];
+                                                            $volta = strtotime($base_volta) + ($horas * 3600);
                                                             echo ' - <span class="small text-muted" title="Previsão de volta"><i class="fas fa-undo-alt me-1"></i>' . date('d/m H:i', $volta) . '</span>';
                                                         }
                                                     }
@@ -197,7 +189,7 @@ $css_padrao = "
                                         </td>
                                         <td>
                                             <?php if($res['maturado']): ?>
-                                                <span class="badge bg-success"><?= $res['dias_maturacao'] ?> dias</span>
+                                                <span class="badge bg-success"><?= (int)$res['dias_maturacao'] ?> dias</span>
                                             <?php else: ?>
                                                 <span class="text-muted small">Não</span>
                                             <?php endif; ?>
@@ -209,17 +201,17 @@ $css_padrao = "
                                         <td>
                                             <button class="btn btn-sm btn-outline-primary btn-action" 
                                                 onclick="editarNumero(
-                                                    <?= $res['id'] ?>, 
-                                                    '<?= $res['numero'] ?>', 
-                                                    <?= $res['equipe_id'] ?? 0 ?>, 
-                                                    '<?= $res['status'] ?>', 
-                                                    '<?= $res['posicao'] ?? '' ?>', 
-                                                    '<?= htmlspecialchars($res['nome_equipe'] ?? '') ?>'
+                                                    <?= (int)$res['id'] ?>, 
+                                                    <?= js_attr($res['numero']) ?>, 
+                                                    <?= (int)($res['equipe_id'] ?? 0) ?>, 
+                                                    <?= js_attr($res['status']) ?>, 
+                                                    <?= js_attr($res['posicao'] ?? '') ?>, 
+                                                    <?= js_attr($res['nome_equipe'] ?? '') ?>
                                                 )" 
                                                 title="Editar ou Corrigir número"><i class="fas fa-pen"></i></button>
                                             
                                             <?php if($res['id_equipe']): ?>
-                                                <a href="equipe.php?id=<?= $res['id_equipe'] ?>" class="btn btn-sm btn-outline-dark" title="Ir para a equipe deste número">Ir para equipe</a>
+                                                <a href="equipe.php?id=<?= (int)$res['id_equipe'] ?>" class="btn btn-sm btn-outline-dark" title="Ir para a equipe deste número">Ir para equipe</a>
                                             <?php endif; ?>
                                         </td>
                                     </tr>
@@ -285,12 +277,12 @@ $css_padrao = "
         <div class="list-group list-group-flush">
             <?php foreach($equipes as $eq): ?>
                 <div class="list-group-item list-group-item-action p-3 d-flex justify-content-between align-items-center">
-                    <a href="equipe.php?id=<?= $eq['id'] ?>" class="text-decoration-none text-dark flex-grow-1" title="Abrir equipe <?= htmlspecialchars($eq['nome']) ?>">
+                    <a href="equipe.php?id=<?= (int)$eq['id'] ?>" class="text-decoration-none text-dark flex-grow-1" title="Abrir equipe <?= htmlspecialchars($eq['nome']) ?>">
                         <h6 class="mb-0 fw-bold"><?= htmlspecialchars($eq['nome']) ?></h6>
                     </a>
                     <div>
-                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="editarEquipe(<?= $eq['id'] ?>, '<?= htmlspecialchars($eq['nome'], ENT_QUOTES) ?>')" title="Editar nome da equipe"><i class="fas fa-edit"></i></button>
-                        <button class="btn btn-sm btn-outline-danger" onclick="confirmarExclusaoEquipe(<?= $eq['id'] ?>, '<?= htmlspecialchars($eq['nome'], ENT_QUOTES) ?>')" title="Excluir equipe"><i class="fas fa-trash"></i></button>
+                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="editarEquipe(<?= (int)$eq['id'] ?>, <?= js_attr($eq['nome']) ?>)" title="Editar nome da equipe"><i class="fas fa-edit"></i></button>
+                        <button class="btn btn-sm btn-outline-danger" onclick="confirmarExclusaoEquipe(<?= (int)$eq['id'] ?>, <?= js_attr($eq['nome']) ?>)" title="Excluir equipe"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>
             <?php endforeach; ?>
@@ -302,16 +294,17 @@ $css_padrao = "
     </div>
 </div>
 
-<div class="modal fade" id="modalEquipe" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><input type="hidden" name="acao" value="add_equipe"><div class="modal-header bg-primary text-white"><h5 class="modal-title">Nova Equipe</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="text" name="nome" class="form-control" required placeholder="Nome"></div><div class="modal-footer"><button type="submit" class="btn btn-primary">Salvar</button></div></form></div></div></div>
+<div class="modal fade" id="modalEquipe" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><?= csrf_field() ?><input type="hidden" name="acao" value="add_equipe"><div class="modal-header bg-primary text-white"><h5 class="modal-title">Nova Equipe</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="text" name="nome" class="form-control" required placeholder="Nome"></div><div class="modal-footer"><button type="submit" class="btn btn-primary">Salvar</button></div></form></div></div></div>
 
-<div class="modal fade" id="modalChip" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><input type="hidden" name="acao" value="add_chip"><div class="modal-header bg-success text-white"><h5 class="modal-title">Novo Chip</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="mb-3"><label>Número</label><input type="text" name="numero" class="form-control" required placeholder="Somente números..." maxlength="20" oninput="mascaraNumero(this)"></div><div class="mb-3"><label>Equipe</label><select name="equipe_id" class="form-select" required><option value="">Selecione...</option><?php foreach($equipes as $eq): ?><option value="<?= $eq['id'] ?>"><?= htmlspecialchars($eq['nome']) ?></option><?php endforeach; ?></select></div><div class="mb-3 form-check"><input type="checkbox" class="form-check-input" id="chkMaturadoIndex" name="maturado" onchange="toggleDias('chkMaturadoIndex', 'divDiasIndex')"><label class="form-check-label fw-bold" for="chkMaturadoIndex">Número Maturado?</label></div><div class="mb-3" id="divDiasIndex" style="display: none;"><label>Quantos dias de maturação?</label><input type="number" name="dias_maturacao" class="form-control" placeholder="Ex: 5"></div></div><div class="modal-footer"><button type="submit" class="btn btn-success">Salvar</button></div></form></div></div></div>
+<div class="modal fade" id="modalChip" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><?= csrf_field() ?><input type="hidden" name="acao" value="add_chip"><div class="modal-header bg-success text-white"><h5 class="modal-title">Novo Chip</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><div class="mb-3"><label>Número</label><input type="text" name="numero" class="form-control" required placeholder="Somente números..." maxlength="20" oninput="mascaraNumero(this)"></div><div class="mb-3"><label>Equipe</label><select name="equipe_id" class="form-select" required><option value="">Selecione...</option><?php foreach($equipes as $eq): ?><option value="<?= (int)$eq['id'] ?>"><?= htmlspecialchars($eq['nome']) ?></option><?php endforeach; ?></select></div><div class="mb-3 form-check"><input type="checkbox" class="form-check-input" id="chkMaturadoIndex" name="maturado" onchange="toggleDias('chkMaturadoIndex', 'divDiasIndex')"><label class="form-check-label fw-bold" for="chkMaturadoIndex">Número Maturado?</label></div><div class="mb-3" id="divDiasIndex" style="display: none;"><label>Quantos dias de maturação?</label><input type="number" name="dias_maturacao" class="form-control" placeholder="Ex: 5"></div></div><div class="modal-footer"><button type="submit" class="btn btn-success">Salvar</button></div></form></div></div></div>
 
-<div class="modal fade" id="modalEditEquipe" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><input type="hidden" name="acao" value="edit_equipe"><input type="hidden" name="id" id="edit_id"><div class="modal-header bg-secondary text-white"><h5 class="modal-title">Editar Equipe</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="text" name="nome" id="edit_nome" class="form-control" required></div><div class="modal-footer"><button type="submit" class="btn btn-secondary">Atualizar</button></div></form></div></div></div>
+<div class="modal fade" id="modalEditEquipe" tabindex="-1"><div class="modal-dialog"><div class="modal-content"><form action="actions.php" method="POST"><?= csrf_field() ?><input type="hidden" name="acao" value="edit_equipe"><input type="hidden" name="id" id="edit_id"><div class="modal-header bg-secondary text-white"><h5 class="modal-title">Editar Equipe</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body"><input type="text" name="nome" id="edit_nome" class="form-control" required></div><div class="modal-footer"><button type="submit" class="btn btn-secondary">Atualizar</button></div></form></div></div></div>
 
 <div class="modal fade" id="modalEditNumero" tabindex="-1">
     <div class="modal-dialog">
         <div class="modal-content">
             <form action="actions.php" method="POST" id="formEditNumero">
+                <?= csrf_field() ?>
                 <input type="hidden" name="acao" value="edit_chip">
                 <input type="hidden" name="chip_id" id="edit_chip_id">
                 <input type="hidden" id="edit_equipe_original">
@@ -333,7 +326,7 @@ $css_padrao = "
                         <select name="equipe_id" id="edit_chip_equipe" class="form-select" required>
                             <option value="">-- SEM EQUIPE --</option>
                             <?php foreach($equipes as $eq): ?>
-                                <option value="<?= $eq['id'] ?>"><?= htmlspecialchars($eq['nome']) ?></option>
+                                <option value="<?= (int)$eq['id'] ?>"><?= htmlspecialchars($eq['nome']) ?></option>
                             <?php endforeach; ?>
                         </select>
                     </div>
@@ -347,7 +340,7 @@ $css_padrao = "
 </div>
 
 <div class="modal fade" id="modalErroDuplicado" tabindex="-1"><div class="modal-dialog"><div class="modal-content border-0 shadow"><div class="modal-header bg-danger text-white border-0"><h5 class="modal-title"><i class="fas fa-exclamation-triangle"></i> Atenção</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body text-center py-4"><h5 class="fw-bold mb-0">Número já cadastrado!</h5></div><div class="modal-footer justify-content-center border-0"><button type="button" class="btn btn-secondary w-50" data-bs-dismiss="modal">Fechar</button></div></div></div></div>
-<div class="modal fade" id="modalConfirmacaoExclusao" tabindex="-1"><div class="modal-dialog"><div class="modal-content border-0 shadow"><div class="modal-header bg-danger text-white border-0"><h5 class="modal-title">Excluir Equipe?</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body text-center py-4"><p id="textoConfirmacaoExclusao" class="fw-bold mb-0"></p><small class="text-danger">Os chips serão mantidos sem equipe.</small></div><div class="modal-footer justify-content-center border-0 gap-2"><a href="#" id="linkConfirmacaoExclusao" class="btn btn-success px-4 fw-bold">SIM</a><button type="button" class="btn btn-danger px-4 fw-bold" data-bs-dismiss="modal">NÃO</button></div></div></div></div>
+<div class="modal fade" id="modalConfirmacaoExclusao" tabindex="-1"><div class="modal-dialog"><div class="modal-content border-0 shadow"><div class="modal-header bg-danger text-white border-0"><h5 class="modal-title">Excluir Equipe?</h5><button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button></div><div class="modal-body text-center py-4"><p id="textoConfirmacaoExclusao" class="fw-bold mb-0"></p><small class="text-danger">Os chips serão mantidos sem equipe. Chips em uso serão liberados.</small></div><div class="modal-footer justify-content-center border-0 gap-2"><a href="#" id="linkConfirmacaoExclusao" class="btn btn-success px-4 fw-bold">SIM</a><button type="button" class="btn btn-danger px-4 fw-bold" data-bs-dismiss="modal">NÃO</button></div></div></div></div>
 
 <div class="modal fade" id="modalAlertaBloqueio" tabindex="-1">
     <div class="modal-dialog">
@@ -386,8 +379,11 @@ $css_padrao = "
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
+<script src="assets/app.js"></script>
 <script>
+    const CSRF_TOKEN = <?= json_encode(csrf_token()) ?>;
+
     function editarEquipe(id, nome) { document.getElementById('edit_id').value = id; document.getElementById('edit_nome').value = nome; new bootstrap.Modal(document.getElementById('modalEditEquipe')).show(); }
     
     let modalEditInstance = null;
@@ -456,42 +452,17 @@ $css_padrao = "
         }
     }
 
-    function confirmarExclusaoEquipe(id, nome) { document.getElementById('textoConfirmacaoExclusao').innerText = "Apagar " + nome + "?"; document.getElementById('linkConfirmacaoExclusao').href = "actions.php?acao=delete_equipe&id=" + id; new bootstrap.Modal(document.getElementById('modalConfirmacaoExclusao')).show(); }
-    function toggleDias(chkId, divId) { var chk = document.getElementById(chkId); var div = document.getElementById(divId); var input = div.querySelector('input'); if(chk.checked) { div.style.display = "block"; input.required = true; } else { div.style.display = "none"; input.required = false; input.value = ""; } }
-    
-    // --- NOVA MÁSCARA DINÂMICA (ATUALIZADA) ---
-    function mascaraNumero(input) {
-        let v = input.value.replace(/\D/g, ""); // Remove não-números
-        
-        if (v.length > 13) v = v.slice(0, 13); // Trava em 13 dígitos
-
-        // 13 Digitos: +55 (11) 91234-5678
-        if (v.length > 12) {
-            v = v.replace(/^(\d{2})(\d{2})(\d{5})(\d{4})/, "+$1 ($2) $3-$4");
-        } 
-        // 12 Digitos: +55 (11) 5196-3908
-        else if (v.length > 11) {
-            v = v.replace(/^(\d{2})(\d{2})(\d{4})(\d{4})/, "+$1 ($2) $3-$4");
-        }
-        // 11 Dígitos: (11) 91234-5678 (COM ESPAÇO)
-        else if (v.length > 10) { 
-            v = v.replace(/^(\d{2})(\d{5})(\d{4})/, "($1) $2-$3");
-        } 
-        // 10 Dígitos: (11) 1234-5678 (COM ESPAÇO)
-        else if (v.length > 9) { 
-            v = v.replace(/^(\d{2})(\d{4})(\d{4})/, "($1) $2-$3");
-        } 
-        // 9 Dígitos: 91234-5678
-        else if (v.length > 8) { 
-            v = v.replace(/^(\d{5})(\d{4})/, "$1-$2");
-        } 
-        // 8 Dígitos: 1234-5678
-        else if (v.length > 4) { 
-            v = v.replace(/^(\d{4})(\d{0,4})/, "$1-$2");
-        }
-        
-        input.value = v;
+    // Exclusão de equipe (via POST + CSRF)
+    let idEquipeExcluir = 0;
+    function confirmarExclusaoEquipe(id, nome) {
+        idEquipeExcluir = id;
+        document.getElementById('textoConfirmacaoExclusao').innerText = "Apagar " + nome + "?";
+        new bootstrap.Modal(document.getElementById('modalConfirmacaoExclusao')).show();
     }
+    document.getElementById('linkConfirmacaoExclusao').addEventListener('click', function(e) {
+        e.preventDefault();
+        postAcao({ acao: 'delete_equipe', id: idEquipeExcluir });
+    });
 
     const urlParams = new URLSearchParams(window.location.search); 
     if(urlParams.get('erro') === 'duplicado') { new bootstrap.Modal(document.getElementById('modalErroDuplicado')).show(); }

@@ -3,66 +3,6 @@
 require 'functions.php';
 verificar_login();
 
-$equipe_id = $_POST['equipe_id'] ?? '';
-
-// Validação
-if (empty($equipe_id) || $equipe_id == 'todas') {
-    die("Erro: Por favor, selecione uma equipe específica para gerar este relatório.");
-}
-
-// Busca nome da equipe
-$stmt = $db->prepare("SELECT nome FROM equipes WHERE id = :id");
-$stmt->execute([':id' => $equipe_id]);
-$nome_equipe = $stmt->fetchColumn();
-
-if (!$nome_equipe) {
-    die("Equipe não encontrada.");
-}
-
-// Query de dados
-$sql = "SELECT c.numero, 
-        (SELECT data_hora FROM logs WHERE alvo_tipo = 'chip' AND alvo_id = c.id ORDER BY id ASC LIMIT 1) as data_entrada
-        FROM chips c
-        WHERE c.equipe_id = :eid
-        ORDER BY data_entrada DESC";
-
-$stmt = $db->prepare($sql);
-$stmt->execute([':eid' => $equipe_id]);
-$chips = $stmt->fetchAll(PDO::FETCH_ASSOC);
-
-// Prepara os dados para o Excel
-$dadosExcel = [];
-$dadosExcel[] = ['Número', 'Data']; 
-
-foreach ($chips as $chip) {
-    // 1. Remove tudo que não for número (tira parenteses, espaços, traços, etc)
-    $apenas_numeros = preg_replace('/\D/', '', $chip['numero']);
-    $qtd_digitos = strlen($apenas_numeros);
-    
-    // 2. Aplica a regra de formatação solicitada para o Excel
-    if ($qtd_digitos === 12 || $qtd_digitos === 13) {
-        // Para 12 ou 13 dígitos: Adiciona o + na frente
-        $numero = '+' . $apenas_numeros;
-    } else {
-        // Para 8, 9, 10 ou 11 dígitos: Mantém apenas os números
-        $numero = $apenas_numeros;
-    }
-
-    $data_entrada = '-';
-    if (!empty($chip['data_entrada'])) {
-        $data_entrada = date('d/m/Y H:i:s', strtotime($chip['data_entrada']));
-    }
-    
-    $dadosExcel[] = [$numero, $data_entrada];
-}
-
-// PADRÃO DE NOME: CHIPS_NOME-EQUIPE-DATA.xlsx
-$nome_limpo = preg_replace('/[^A-Za-z0-9]/', '-', mb_strtoupper($nome_equipe, 'UTF-8'));
-$nome_arquivo = "CHIPS_" . $nome_limpo . "-" . date('d-m-Y') . ".xlsx";
-
-SimpleXLSXWriter::download($dadosExcel, $nome_arquivo);
-exit;
-
 /**
  * Classe Minimalista para gerar XLSX
  */
@@ -149,4 +89,66 @@ class SimpleXLSXWriter {
         $this->zip->close();
     }
 }
-?>
+
+// ---------------- Lógica da página ----------------
+
+$equipe_id = $_POST['equipe_id'] ?? '';
+
+// Validação
+if (empty($equipe_id) || $equipe_id === 'todas') {
+    die("Erro: Por favor, selecione uma equipe específica para gerar este relatório.");
+}
+$equipe_id = (int)$equipe_id;
+
+// Busca nome da equipe
+$stmt = $db->prepare("SELECT nome FROM equipes WHERE id = :id");
+$stmt->execute([':id' => $equipe_id]);
+$nome_equipe = $stmt->fetchColumn();
+
+if (!$nome_equipe) {
+    die("Equipe não encontrada.");
+}
+
+// Query de dados (data de entrada = primeiro log do chip)
+$sql = "SELECT c.numero, 
+        (SELECT data_hora FROM logs WHERE alvo_tipo = 'chip' AND alvo_id = c.id ORDER BY id ASC LIMIT 1) as data_entrada
+        FROM chips c
+        WHERE c.equipe_id = :eid
+        ORDER BY data_entrada DESC";
+
+$stmt = $db->prepare($sql);
+$stmt->execute([':eid' => $equipe_id]);
+$chips = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+// Prepara os dados para o Excel
+$dadosExcel = [];
+$dadosExcel[] = ['Número', 'Data']; 
+
+foreach ($chips as $chip) {
+    // 1. Remove tudo que não for número (tira parenteses, espaços, traços, etc)
+    $apenas_numeros = preg_replace('/\D/', '', $chip['numero']);
+    $qtd_digitos = strlen($apenas_numeros);
+    
+    // 2. Aplica a regra de formatação solicitada para o Excel
+    if ($qtd_digitos === 12 || $qtd_digitos === 13) {
+        // Para 12 ou 13 dígitos: Adiciona o + na frente
+        $numero = '+' . $apenas_numeros;
+    } else {
+        // Para 8, 9, 10 ou 11 dígitos: Mantém apenas os números
+        $numero = $apenas_numeros;
+    }
+
+    $data_entrada = '-';
+    if (!empty($chip['data_entrada'])) {
+        $data_entrada = date('d/m/Y H:i:s', strtotime($chip['data_entrada']));
+    }
+    
+    $dadosExcel[] = [$numero, $data_entrada];
+}
+
+// PADRÃO DE NOME: CHIPS_NOME-EQUIPE-DATA.xlsx
+$nome_limpo = preg_replace('/[^A-Za-z0-9]/', '-', mb_strtoupper($nome_equipe, 'UTF-8'));
+$nome_arquivo = "CHIPS_" . $nome_limpo . "-" . date('d-m-Y') . ".xlsx";
+
+SimpleXLSXWriter::download($dadosExcel, $nome_arquivo);
+exit;

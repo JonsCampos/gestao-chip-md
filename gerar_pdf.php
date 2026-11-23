@@ -9,8 +9,14 @@ verificar_login();
 use Dompdf\Dompdf;
 use Dompdf\Options;
 
+// Valida data no formato Y-m-d (senão usa o padrão)
+function data_valida_ymd($d, $padrao) {
+    $dt = DateTime::createFromFormat('Y-m-d', (string)$d);
+    return ($dt && $dt->format('Y-m-d') === $d) ? $d : $padrao;
+}
+
 // --- 1. IMAGEM ---
-$caminho_imagem = 'logo.png';
+$caminho_imagem = 'assets/img/logo.png'; // Caminho da imagem do logo
 $img_base64 = '';
 if (file_exists($caminho_imagem)) {
     $tipo = pathinfo($caminho_imagem, PATHINFO_EXTENSION);
@@ -19,9 +25,12 @@ if (file_exists($caminho_imagem)) {
 }
 
 // --- 2. DADOS ---
-$data_inicio = $_POST['data_inicio'] ?? date('Y-m-01');
-$data_fim = $_POST['data_fim'] ?? date('Y-m-d');
+$data_inicio = data_valida_ymd($_POST['data_inicio'] ?? '', date('Y-m-01'));
+$data_fim = data_valida_ymd($_POST['data_fim'] ?? '', date('Y-m-d'));
 $equipe_id = $_POST['equipe_id'] ?? 'todas';
+if ($equipe_id !== 'todas') {
+    $equipe_id = (int)$equipe_id;
+}
 
 $inicio_sql = $data_inicio . " 00:00:00";
 $fim_sql = $data_fim . " 23:59:59";
@@ -33,40 +42,29 @@ $nome_alvo_normalizado = null;
 $filtro_sql = "";
 $params = [':inicio' => $inicio_sql, ':fim' => $fim_sql];
 
-if ($equipe_id != 'todas') {
+if ($equipe_id !== 'todas') {
     $stmtEq = $db->prepare("SELECT nome FROM equipes WHERE id = :id");
     $stmtEq->execute([':id' => $equipe_id]);
     $nome_db = $stmtEq->fetchColumn();
     
     $nome_equipe_filtro = $nome_db;
     $nome_arquivo_prefixo = $nome_db; // Usa o nome da equipe para o arquivo
-    $nome_alvo_normalizado = mb_strtoupper(trim($nome_db), 'UTF-8');
+    $nome_alvo_normalizado = mb_strtoupper(trim((string)$nome_db), 'UTF-8');
 
-    // Filtra logs relacionados à equipe (por ID ou texto)
-    $filtro_sql = " AND (
-        l.alvo_id = :eid_logs OR 
-        ec.id = :eid_chip OR 
-        e.id = :eid_eq OR
-        l.detalhe LIKE :nome_equipe OR 
-        l.detalhe LIKE :nome_equipe_curto
-    ) ";
-    
-    $params[':eid_logs'] = $equipe_id;
-    $params[':eid_chip'] = $equipe_id;
-    $params[':eid_eq'] = $equipe_id;
-    $params[':nome_equipe'] = "%Equipe: $nome_db%";
-    $params[':nome_equipe_curto'] = "%(Eq: $nome_db)%";
+    // Logs da equipe (pelo id guardado no log) + logs antigos sem id (resolvidos pelo nome no texto)
+    $filtro_sql = " AND (l.equipe_id = :eid OR l.equipe_id IS NULL) ";
+    $params[':eid'] = $equipe_id;
 }
 
 // --- 4. CONSULTA ---
+// A equipe de cada evento vem de logs.equipe_id (equipe no momento do evento)
 $sql = "SELECT 
             l.acao, 
             l.detalhe, 
-            COALESCE(e.nome, ec.nome) as nome_equipe_db 
+            l.equipe_id,
+            eq.nome as nome_equipe_db 
         FROM logs l
-        LEFT JOIN chips c ON (l.alvo_tipo = 'chip' AND l.alvo_id = c.id)
-        LEFT JOIN equipes ec ON (c.equipe_id = ec.id)
-        LEFT JOIN equipes e ON (l.alvo_tipo = 'equipe' AND l.alvo_id = e.id)
+        LEFT JOIN equipes eq ON eq.id = l.equipe_id
         WHERE l.data_hora BETWEEN :inicio AND :fim 
         $filtro_sql
         ORDER BY l.data_hora ASC";
@@ -92,8 +90,10 @@ foreach ($logs as $log) {
     $nome_eq = null;
 
     if (!empty($log['nome_equipe_db'])) {
+        // Equipe do evento (nome atual dela)
         $nome_eq = $log['nome_equipe_db'];
     } else {
+        // Equipe excluída ou log antigo sem id: usa o nome gravado no texto
         if (preg_match('/EQUIPE:\s*([^|\[\(]+)/iu', $detalhe, $matches)) {
             $nome_eq = trim($matches[1]);
         } elseif (preg_match('/\(EQ:\s*([^)]+)\)/iu', $detalhe, $matches)) {
@@ -109,8 +109,14 @@ foreach ($logs as $log) {
         }
     }
 
-    if ($equipe_id != 'todas') {
-        if ($nome_eq !== $nome_alvo_normalizado) {
+    if ($equipe_id !== 'todas') {
+        if ($log['equipe_id'] !== null) {
+            // Log com equipe registrada: compara pelo id
+            if ((int)$log['equipe_id'] !== $equipe_id) {
+                continue;
+            }
+        } elseif ($nome_eq !== $nome_alvo_normalizado) {
+            // Log sem id: compara pelo nome
             continue; 
         }
     }
@@ -140,7 +146,7 @@ foreach ($logs as $log) {
     if ($is_descartado) $stats['descartado']++;
 
     // 4. Incremento Equipe
-    if ($equipe_id == 'todas' && $nome_eq) {
+    if ($equipe_id === 'todas' && $nome_eq) {
         if (!isset($stats_equipes[$nome_eq])) {
             $stats_equipes[$nome_eq] = [
                 'novos' => 0, 'conexoes' => 0, 'digisac' => 0, 'web' => 0,
@@ -191,7 +197,7 @@ $html = '
         <img src="' . $img_base64 . '" class="header-logo">
         <div class="titulo">RELATÓRIO DE CHIPS</div>
         <div class="subtitulo">
-            Equipe: <strong>' . htmlspecialchars($nome_equipe_filtro) . '</strong><br>
+            Equipe: <strong>' . htmlspecialchars((string)$nome_equipe_filtro) . '</strong><br>
             Período: ' . date('d/m/Y', strtotime($data_inicio)) . ' até ' . date('d/m/Y', strtotime($data_fim)) . '
         </div>
     </div>
@@ -240,7 +246,7 @@ $html = '
     </table>
 ';
 
-if ($equipe_id == 'todas' && count($stats_equipes) > 0) {
+if ($equipe_id === 'todas' && count($stats_equipes) > 0) {
     $html .= '
     <div class="section-header">Desempenho por Equipe</div>
     <table>
@@ -262,18 +268,19 @@ if ($equipe_id == 'todas' && count($stats_equipes) > 0) {
     $html .= '</tbody></table><div style="font-size: 10px; color: #666; margin-top: 5px; text-align: right;">* Equipes sem movimentação no período não são listadas.</div>';
 }
 
-$html .= '<div class="footer">Gerado automaticamente em ' . date('d/m/Y H:i') . ' | Usuário: ' . $_SESSION['usuario_nome'] . '</div></body></html>';
+$html .= '<div class="footer">Gerado automaticamente em ' . date('d/m/Y H:i') . ' | Usuário: ' . htmlspecialchars($_SESSION['usuario_nome'] ?? '') . '</div></body></html>';
 
 // --- GERA O PDF E DEFINE O NOME ---
 $options = new Options();
-$options->setIsRemoteEnabled(true);
+// Logo vai embutido em base64 (data URI), então não precisa buscar nada na internet
+$options->setIsRemoteEnabled(false);
 $dompdf = new Dompdf($options);
 $dompdf->loadHtml($html);
 $dompdf->setPaper('A4', 'portrait');
 $dompdf->render();
 
 // Sanitiza o nome para evitar erros no arquivo
-$nome_limpo = preg_replace('/[^A-Za-z0-9_\-]/', '_', $nome_arquivo_prefixo);
+$nome_limpo = preg_replace('/[^A-Za-z0-9_\-]/', '_', (string)$nome_arquivo_prefixo);
 $nome_arquivo = $nome_limpo . "_" . date('dmY_Hi') . ".pdf";
 
 $dompdf->stream($nome_arquivo, ["Attachment" => true]);

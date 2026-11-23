@@ -1,12 +1,15 @@
-# Dependências do Composer
-/vendor/
-
-# Banco de dados SQLite (evita conflitos e exposição de dados reais)
+# Banco de dados (dados reais, nunca versionar)
+database/*.db
+database/*.db-journal
+database/*.db-wal
+database/*.db-shm
 *.db
-*.sqlite
-*.sqlite3
 
-# Arquivos do sistema e editores
-.DS_Store
+# Anotações e temporários
+claude.txt
+
+# Sistema e editor
 Thumbs.db
+.DS_Store
 .vscode/
+.idea/

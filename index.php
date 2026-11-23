@@ -1,4 +1,10 @@
 <?php
+session_set_cookie_params([
+    'lifetime' => 0,
+    'httponly' => true,
+    'samesite' => 'Lax',
+    'secure'   => !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off',
+]);
 session_start();
 // Se já estiver logado, manda para o painel
 if (isset($_SESSION['usuario_id'])) {
@@ -11,8 +17,8 @@ if (isset($_SESSION['usuario_id'])) {
 <head>
     <meta charset="UTF-8">
     <title>Login - Gestão de Chips</title>
-    <link rel="icon" href="icone.png" type="image/png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="icon" href="assets/img/icone.png" type="image/png">
+    <link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
     <style>
         body { background-color: #f8f9fa; display: flex; align-items: center; justify-content: center; height: 100vh; }
         .login-card { width: 100%; max-width: 400px; padding: 20px; border-radius: 10px; }
@@ -23,11 +29,13 @@ if (isset($_SESSION['usuario_id'])) {
 
 <div class="card login-card shadow border-0">
     <div class="card-body text-center">
-        <img src="logo.png" class="brand-logo" alt="Logo">
+        <img src="assets/img/logo.png" class="brand-logo" alt="Logo">
         <h4 class="mb-4 fw-bold text-secondary">Gestão de Chips</h4>
         
         <?php if(isset($_GET['erro']) && $_GET['erro'] == 'dados_invalidos'): ?>
             <div class="alert alert-danger py-2 small">Usuário ou senha incorretos.</div>
+        <?php elseif (isset($_GET['erro']) && $_GET['erro'] == 'bloqueado'): ?>
+            <div class="alert alert-warning py-2 small">Muitas tentativas incorretas. Aguarde 15 minutos e tente novamente.</div>
         <?php endif; ?>
 
         <form action="actions.php" method="POST">

@@ -3,7 +3,24 @@
 header("Content-Type: text/html; charset=utf-8");
 require 'functions.php';
 
-$acao = $_POST['acao'] ?? $_GET['acao'] ?? '';
+$acao = $_POST['acao'] ?? '';
+// Logout continua aceitando GET (só encerra a própria sessão)
+if ($acao === '' && ($_GET['acao'] ?? '') === 'logout') {
+    $acao = 'logout';
+}
+
+// --- PROTEÇÃO GLOBAL: tudo exige login, POST e token CSRF (exceto login/logout) ---
+if (!in_array($acao, ['login', 'logout'], true)) {
+    verificar_login();
+    if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+        http_response_code(405);
+        die('Método não permitido.');
+    }
+    if (!csrf_validar()) {
+        http_response_code(403);
+        die('Token de segurança inválido ou expirado. <a href="painel.php">Voltar ao painel</a>');
+    }
+}
 
 function converter_horas($entrada) {
     if (strpos($entrada, ':') !== false) {
@@ -23,24 +40,52 @@ function get_nome_equipe($db, $id) {
 try {
     // --- 0. AUTENTICAÇÃO ---
     if ($acao == 'login') {
-        $usuario = $_POST['usuario'];
-        $senha = $_POST['senha'];
+        if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+            header("Location: index.php");
+            exit;
+        }
+
+        $ip = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+        $usuario = $_POST['usuario'] ?? '';
+        $senha = $_POST['senha'] ?? '';
+
+        // Limpeza de tentativas antigas
+        $db->exec("DELETE FROM login_tentativas WHERE data_hora < datetime('now', 'localtime', '-1 day')");
+
+        // Limite: 5 erros em 15 minutos por IP
+        $stmtLim = $db->prepare("SELECT COUNT(*) FROM login_tentativas WHERE ip = :ip AND data_hora > datetime('now', 'localtime', '-15 minutes')");
+        $stmtLim->execute([':ip' => $ip]);
+        if ($stmtLim->fetchColumn() >= 5) {
+            header("Location: index.php?erro=bloqueado");
+            exit;
+        }
+
         $stmt = $db->prepare("SELECT * FROM usuarios WHERE usuario = :user");
         $stmt->execute([':user' => $usuario]);
         $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
         if ($user && password_verify($senha, $user['senha'])) {
+            session_regenerate_id(true);
+            $db->prepare("DELETE FROM login_tentativas WHERE ip = :ip")->execute([':ip' => $ip]);
+
             $_SESSION['usuario_id'] = $user['id'];
             $_SESSION['usuario_nome'] = $user['nome'];
             registrar_log('Login', 'Usuário realizou login', 'sistema', $user['id']);
             header("Location: painel.php");
         } else {
+            $db->prepare("INSERT INTO login_tentativas (ip) VALUES (:ip)")->execute([':ip' => $ip]);
             header("Location: index.php?erro=dados_invalidos");
         }
+        exit;
     }
     elseif ($acao == 'logout') {
-        registrar_log('Logout', 'Usuário saiu do sistema', 'sistema', $_SESSION['usuario_id']);
+        if (isset($_SESSION['usuario_id'])) {
+            registrar_log('Logout', 'Usuário saiu do sistema', 'sistema', $_SESSION['usuario_id']);
+        }
+        $_SESSION = [];
         session_destroy();
         header("Location: index.php");
+        exit;
     }
 
     // --- 1. CHIPS ---
@@ -61,8 +106,9 @@ try {
         $stmt->execute([':n' => $numero_limpo]);
         
         if ($stmt->fetchColumn() > 0) {
-            $redirect = ($origem == 'equipe') ? "equipe.php?id=$equipe_id" : "painel.php";
-            header("Location: $redirect&erro=duplicado");
+            // CORRIGIDO: o redirect do painel não tinha "?" e o aviso de duplicado nunca aparecia
+            $redirect = ($origem == 'equipe') ? "equipe.php?id=" . (int)$equipe_id . "&erro=duplicado" : "painel.php?erro=duplicado";
+            header("Location: $redirect");
             exit;
         }
 
@@ -155,6 +201,11 @@ try {
         $stmt->execute([':id' => $id]);
         $chipAtual = $stmt->fetch(PDO::FETCH_ASSOC);
 
+        if (!$chipAtual) {
+            header("Location: painel.php");
+            exit;
+        }
+
         if ($chipAtual['status'] == 'banido' || $chipAtual['status'] == 'descartado') {
             if ($chipAtual['equipe_id'] != $nova_equipe) {
                 header("Location: painel.php?erro=bloqueio_status"); exit;
@@ -162,6 +213,19 @@ try {
         }
         if (!empty($chipAtual['posicao']) && $chipAtual['equipe_id'] != $nova_equipe) {
             header("Location: painel.php?erro=bloqueio_ativo"); exit;
+        }
+
+        // NOVO: impede salvar um número que já existe em OUTRO chip (ignorando máscara)
+        $numero_limpo = preg_replace("/\D/", "", $numero);
+        $sql_clean = "REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(numero, '(', ''), ')', ''), '-', ''), ' ', ''), '+', '')";
+        $stmtDup = $db->prepare("SELECT count(*) FROM chips WHERE $sql_clean = :n AND id != :id");
+        $stmtDup->execute([':n' => $numero_limpo, ':id' => $id]);
+        if ($stmtDup->fetchColumn() > 0) {
+            $redirectDup = ($origem == 'equipe')
+                ? "equipe.php?id=" . (int)$chipAtual['equipe_id'] . "&erro=duplicado"
+                : "painel.php?erro=duplicado";
+            header("Location: $redirectDup");
+            exit;
         }
 
         $sql = "UPDATE chips SET numero = :n, equipe_id = :e WHERE id = :id";
@@ -177,16 +241,22 @@ try {
             registrar_log('Moveu', "Transferiu chip {$chipAtual['numero']} | De: $nomeAntiga | Para: $nomeNova", 'chip', $id);
         }
 
-        $params = $origem == 'equipe' ? "?id={$chipAtual['equipe_id']}&busca_local=$busca_local" : "";
+        $params = $origem == 'equipe' ? "?id={$chipAtual['equipe_id']}&busca_local=" . urlencode($busca_local) : "";
         header("Location: " . ($origem == 'equipe' ? "equipe.php" : "painel.php") . $params);
     }
 
-    // --- STATUS (ANALISE/SPAM) ---
+    // --- STATUS (ANALISE/SPAM/BANIDO) ---
     elseif ($acao == 'alterar_status') {
-        $id = $_GET['id'];
-        $tipo = $_GET['tipo']; 
-        $equipe_id = $_GET['equipe_id'];
-        $horas_input = $_GET['horas'] ?? 0;
+        $id = $_POST['id'] ?? 0;
+        $tipo = $_POST['tipo'] ?? '';
+        $equipe_id = (int)($_POST['equipe_id'] ?? 0);
+        $horas_input = $_POST['horas'] ?? 0;
+
+        // Só aceita status válidos
+        if (!in_array($tipo, ['analise', 'spam', 'banido'], true)) {
+            header("Location: painel.php");
+            exit;
+        }
 
         $horas_decimal = 0;
         if (!empty($horas_input)) {
@@ -223,8 +293,8 @@ try {
 
     // --- AÇÕES DE HISTÓRICO ---
     elseif ($acao == 'retornou_chip') {
-        $id = $_GET['id'];
-        $equipe_id = $_GET['equipe_id'];
+        $id = $_POST['id'];
+        $equipe_id = (int)$_POST['equipe_id'];
         
         $stmt = $db->prepare("SELECT c.numero, c.status as status_antigo, e.nome as nome_equipe FROM chips c LEFT JOIN equipes e ON c.equipe_id = e.id WHERE c.id = :id");
         $stmt->execute([':id' => $id]);
@@ -235,8 +305,8 @@ try {
         header("Location: banidos.php?id=$equipe_id");
     }
     elseif ($acao == 'banir_chip_lista') {
-        $id = $_GET['id'];
-        $equipe_id = $_GET['equipe_id'];
+        $id = $_POST['id'];
+        $equipe_id = (int)$_POST['equipe_id'];
         
         $stmt = $db->prepare("SELECT c.numero, c.status as status_antigo, e.nome as nome_equipe FROM chips c LEFT JOIN equipes e ON c.equipe_id = e.id WHERE c.id = :id");
         $stmt->execute([':id' => $id]);
@@ -247,8 +317,8 @@ try {
         header("Location: banidos.php?id=$equipe_id");
     }
     elseif ($acao == 'descartar_chip') {
-        $id = $_GET['id'];
-        $equipe_id = $_GET['equipe_id'];
+        $id = $_POST['id'];
+        $equipe_id = (int)$_POST['equipe_id'];
         
         $stmt = $db->prepare("SELECT c.numero, e.nome as nome_equipe FROM chips c LEFT JOIN equipes e ON c.equipe_id = e.id WHERE c.id = :id");
         $stmt->execute([':id' => $id]);
@@ -282,11 +352,20 @@ try {
         header("Location: painel.php");
     }
     elseif ($acao == 'delete_equipe') {
-        $id = $_GET['id'];
+        $id = (int)$_POST['id'];
         $nome = get_nome_equipe($db, $id);
+
+        // NOVO: libera os chips "em uso" da equipe (antes ficavam "em uso" sem equipe)
+        $stmtUso = $db->prepare("UPDATE chips SET status = 'livre', posicao = NULL WHERE equipe_id = :id AND status = 'uso'");
+        $stmtUso->execute([':id' => $id]);
+        $liberados = $stmtUso->rowCount();
+
         $stmt = $db->prepare("DELETE FROM equipes WHERE id = :id");
         $stmt->execute([':id' => $id]);
-        registrar_log('Excluiu', "Excluiu equipe $nome", 'equipe', $id);
+
+        $detalhe = "Excluiu equipe $nome";
+        if ($liberados > 0) $detalhe .= " ($liberados chips em uso foram liberados)";
+        registrar_log('Excluiu', $detalhe, 'equipe', $id);
         header("Location: painel.php");
     }
 
@@ -314,8 +393,8 @@ try {
         header("Location: equipe.php?id=$equipe_id");
     }
     elseif ($acao == 'delete_posicao') {
-        $id_posicao = $_GET['id_posicao'];
-        $equipe_id = $_GET['equipe_id'];
+        $id_posicao = $_POST['id_posicao'];
+        $equipe_id = (int)$_POST['equipe_id'];
         $stmt = $db->prepare("SELECT nome FROM posicoes WHERE id = :id");
         $stmt->execute([':id' => $id_posicao]);
         $pos = $stmt->fetch(PDO::FETCH_ASSOC);
@@ -360,9 +439,9 @@ try {
 
     // --- DESVINCULAR ---
     elseif ($acao == 'desvincular_chip') {
-        $id = $_GET['id'];
-        $equipe_id = $_GET['equipe_id'];
-        $decrementar = $_GET['decrementar'];
+        $id = $_POST['id'];
+        $equipe_id = (int)$_POST['equipe_id'];
+        $decrementar = $_POST['decrementar'] ?? 0;
         
         $stmt = $db->prepare("SELECT c.posicao, c.numero, e.nome as nome_equipe FROM chips c LEFT JOIN equipes e ON c.equipe_id = e.id WHERE c.id = :id");
         $stmt->execute([':id' => $id]);
@@ -384,9 +463,19 @@ try {
         header("Location: equipe.php?id=$equipe_id");
     }
 
+    // --- USUÁRIOS ---
     elseif ($acao == 'add_usuario') {
         $nome = $_POST['nome'];
         $usuario = $_POST['usuario'];
+
+        // Login precisa ser único: avisa em vez de estourar erro do banco
+        $stmtDup = $db->prepare("SELECT COUNT(*) FROM usuarios WHERE usuario = :u");
+        $stmtDup->execute([':u' => $usuario]);
+        if ($stmtDup->fetchColumn() > 0) {
+            header("Location: usuarios.php?erro=usuario_existe");
+            exit;
+        }
+
         $senha = password_hash($_POST['senha'], PASSWORD_DEFAULT);
         $stmt = $db->prepare("INSERT INTO usuarios (nome, usuario, senha) VALUES (:n, :u, :s)");
         $stmt->execute([':n' => $nome, ':u' => $usuario, ':s' => $senha]);
@@ -398,6 +487,15 @@ try {
         $nome = $_POST['nome'];
         $usuario = $_POST['usuario'];
         $senha = $_POST['senha'];
+
+        // Login precisa ser único (ignora o próprio usuário)
+        $stmtDup = $db->prepare("SELECT COUNT(*) FROM usuarios WHERE usuario = :u AND id != :id");
+        $stmtDup->execute([':u' => $usuario, ':id' => $id]);
+        if ($stmtDup->fetchColumn() > 0) {
+            header("Location: usuarios.php?erro=usuario_existe");
+            exit;
+        }
+
         $sql = "UPDATE usuarios SET nome = :n, usuario = :u" . (!empty($senha) ? ", senha = :s" : "") . " WHERE id = :id";
         $params = [':n' => $nome, ':u' => $usuario, ':id' => $id];
         if (!empty($senha)) $params[':s'] = password_hash($senha, PASSWORD_DEFAULT);
@@ -407,18 +505,29 @@ try {
         header("Location: usuarios.php");
     }
     elseif ($acao == 'delete_usuario') {
-        $id = $_GET['id'];
+        $id = (int)$_POST['id'];
         if ($id == $_SESSION['usuario_id']) {
             header("Location: usuarios.php?erro=proprio_usuario");
             exit;
         }
-        $stmt = $db->prepare("DELETE FROM usuarios WHERE id = :id");
-        $stmt->execute([':id' => $id]);
-        registrar_log('Excluiu', "Apagou um usuário do sistema", 'sistema', $id);
+
+        // NOVO: busca quem está sendo excluído para registrar no log
+        $stmtU = $db->prepare("SELECT nome, usuario FROM usuarios WHERE id = :id");
+        $stmtU->execute([':id' => $id]);
+        $alvoUser = $stmtU->fetch(PDO::FETCH_ASSOC);
+
+        if ($alvoUser) {
+            $stmt = $db->prepare("DELETE FROM usuarios WHERE id = :id");
+            $stmt->execute([':id' => $id]);
+            registrar_log('Excluiu', "Excluiu usuário {$alvoUser['usuario']} ({$alvoUser['nome']})", 'usuario', $id);
+        }
         header("Location: usuarios.php");
     }
 
 } catch (PDOException $e) {
-    echo "Erro: " . $e->getMessage();
+    // Detalhe técnico vai para o log do Apache; a tela mostra só um aviso simples
+    error_log('Erro em actions.php (' . $acao . '): ' . $e->getMessage());
+    http_response_code(500);
+    echo 'Não foi possível concluir a operação. <a href="painel.php">Voltar ao painel</a>';
 }
 ?>

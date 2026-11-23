@@ -11,9 +11,9 @@ $equipes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <head>
     <meta charset="UTF-8">
     <title>Relatórios - Gestão de Chips</title>
-    <link rel="icon" href="icone.png" type="image/png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <link rel="icon" href="assets/img/icone.png" type="image/png">
+    <link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
     <style>
         .card-header-custom { background-color: #212529; color: white; }
         .btn-filter { font-size: 0.8rem; font-weight: 600; margin-bottom: 5px; }
@@ -24,7 +24,7 @@ $equipes = $stmt->fetchAll(PDO::FETCH_ASSOC);
 <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
     <div class="container position-relative">
         <a class="navbar-brand fw-bold fs-5" href="painel.php">
-            <img src="logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
+            <img src="assets/img/logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
             Gestão de Chips
         </a>
         <span class="navbar-text text-white fs-5 fw-bold position-absolute top-50 start-50 translate-middle d-none d-lg-block">
@@ -147,7 +147,7 @@ $equipes = $stmt->fetchAll(PDO::FETCH_ASSOC);
     </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 <script>
     function setPeriodo(tipo) {
         const hoje = new Date();

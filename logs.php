@@ -2,16 +2,25 @@
 require 'functions.php';
 verificar_login();
 
+// Valida data no formato Y-m-d (senão usa o padrão)
+function data_valida_ymd($d, $padrao) {
+    $dt = DateTime::createFromFormat('Y-m-d', (string)$d);
+    return ($dt && $dt->format('Y-m-d') === $d) ? $d : $padrao;
+}
+
 // --- PARÂMETROS ---
 $busca = trim($_GET['busca'] ?? '');
 $filtro_tipo = $_GET['tipo'] ?? '';
-$pagina = filter_input(INPUT_GET, 'pagina', FILTER_VALIDATE_INT) ?: 1;
+if (!in_array($filtro_tipo, ['chip', 'equipe', 'usuario', 'sistema'], true)) {
+    $filtro_tipo = '';
+}
+$pagina = max(1, filter_input(INPUT_GET, 'pagina', FILTER_VALIDATE_INT) ?: 1);
 $itens_por_pagina = 20;
 $offset = ($pagina - 1) * $itens_por_pagina;
 
 // --- DATAS (PADRÃO: ÚLTIMOS 7 DIAS) ---
-$data_inicio = $_GET['data_inicio'] ?? date('Y-m-d', strtotime('-7 days'));
-$data_fim = $_GET['data_fim'] ?? date('Y-m-d');
+$data_inicio = data_valida_ymd($_GET['data_inicio'] ?? '', date('Y-m-d', strtotime('-7 days')));
+$data_fim = data_valida_ymd($_GET['data_fim'] ?? '', date('Y-m-d'));
 
 // --- QUERY BASE ---
 $sql_base = "FROM logs l 
@@ -87,43 +96,31 @@ $stmt->bindValue(':offset', $offset, PDO::PARAM_INT);
 $stmt->execute();
 $logs = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
+// Monta a URL com todos os valores codificados (seguro para usar no href)
 function url_filtro($pag, $tipo, $busca, $ini, $fim) {
-    return "?pagina=$pag" . 
-           (!empty($tipo) ? "&tipo=$tipo" : "") . 
+    return "?pagina=" . (int)$pag . 
+           (!empty($tipo) ? "&tipo=" . urlencode($tipo) : "") . 
            (!empty($busca) ? "&busca=" . urlencode($busca) : "") .
-           "&data_inicio=$ini&data_fim=$fim";
+           "&data_inicio=" . urlencode($ini) . "&data_fim=" . urlencode($fim);
 }
 
-$css_padrao = "
-<style>
-    .card-custom-header { background-color: #212529; color: white; padding: 10px 15px; }
-    .badge-acao { font-size: 0.8em; font-weight: bold; min-width: 110px; padding: 7px 0; display: inline-block; text-align: center; }
-    .badge-alvo { font-size: 0.75em; text-transform: uppercase; background-color: #f8f9fa; color: #212529; border: 1px solid #dee2e6; margin-right: 6px; }
-    .table td { vertical-align: middle; padding-top: 12px; padding-bottom: 12px; }
-    .search-container { max-width: 800px; } 
-    .log-pipe { color: #ccc; margin: 0 5px; }
-    .log-meta { color: #666; }
-    .texto-alvo { font-weight: 600; color: #495057; white-space: nowrap; } 
-    .badge-equipe-contexto { font-size: 0.7em; background-color: #6c757d; color: white; margin-left: 5px; vertical-align: middle; }
-</style>
-";
 ?>
 <!DOCTYPE html>
 <html lang="pt-br">
 <head>
     <meta charset="UTF-8">
     <title>Logs - Gestão de Chips</title>
-    <link rel="icon" href="icone.png" type="image/png">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <?= $css_padrao ?>
+    <link rel="icon" href="assets/img/icone.png" type="image/png">
+    <link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="assets/vendor/fontawesome/css/all.min.css">
+    <link rel="stylesheet" href="assets/style.css">
 </head>
-<body class="bg-light">
+<body class="bg-light pagina-logs">
 
 <nav class="navbar navbar-dark bg-dark mb-4 shadow-sm">
     <div class="container position-relative">
         <a class="navbar-brand fw-bold fs-5" href="painel.php">
-            <img src="logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
+            <img src="assets/img/logo.png" width="30" height="30" class="d-inline-block align-text-top me-2">
             Gestão de Chips
         </a>
         <span class="navbar-text text-white fs-5 fw-bold position-absolute top-50 start-50 translate-middle d-none d-lg-block">
@@ -163,18 +160,18 @@ $css_padrao = "
                         
                         <div class="input-group input-group-sm">
                             <span class="input-group-text bg-light text-muted">De</span>
-                            <input type="date" name="data_inicio" class="form-control" value="<?= $data_inicio ?>" required>
+                            <input type="date" name="data_inicio" class="form-control" value="<?= htmlspecialchars($data_inicio) ?>" required>
                         </div>
 
                         <div class="input-group input-group-sm">
                             <span class="input-group-text bg-light text-muted">Até</span>
-                            <input type="date" name="data_fim" class="form-control" value="<?= $data_fim ?>" required>
+                            <input type="date" name="data_fim" class="form-control" value="<?= htmlspecialchars($data_fim) ?>" required>
                         </div>
 
                         <div class="input-group input-group-sm w-100">
                             <input type="text" name="busca" class="form-control" placeholder="Pesquisar..." value="<?= htmlspecialchars($busca) ?>">
                             <?php if(!empty($busca)): ?>
-                                <a href="logs.php<?= !empty($filtro_tipo) ? '?tipo='.$filtro_tipo : '' ?>" class="btn btn-danger" title="Limpar e resetar data"><i class="fas fa-times"></i></a>
+                                <a href="logs.php<?= !empty($filtro_tipo) ? '?tipo=' . urlencode($filtro_tipo) : '' ?>" class="btn btn-danger" title="Limpar e resetar data"><i class="fas fa-times"></i></a>
                             <?php endif; ?>
                             <button class="btn btn-primary" type="submit"><i class="fas fa-search"></i></button>
                         </div>
@@ -186,7 +183,7 @@ $css_padrao = "
 
     <div class="card shadow-sm border-0">
         <div class="card-custom-header d-flex justify-content-between align-items-center">
-            <h6 class="mb-0"><i class="fas fa-list"></i> Registros: <strong><?= $total_registros ?></strong></h6>
+            <h6 class="mb-0"><i class="fas fa-list"></i> Registros: <strong><?= (int)$total_registros ?></strong></h6>
         </div>
         <div class="card-body p-0">
             <table class="table table-hover mb-0">
@@ -203,46 +200,46 @@ $css_padrao = "
                     <?php foreach($logs as $log): ?>
                         <tr>
                             <td class="small text-muted"><?= date('d/m/Y H:i', strtotime($log['data_hora'])) ?></td>
-                            <td class="fw-bold"><?= htmlspecialchars($log['nome_ator_real'] ?? $log['nome_ator_backup']) ?></td>
+                            <td class="fw-bold"><?= htmlspecialchars($log['nome_ator_real'] ?? $log['nome_ator_backup'] ?? '') ?></td>
                             <td class="text-center">
                                 <?php
                                     $cor = 'secondary';
-                                    $txtAcao = strtoupper($log['acao']);
+                                    $txtAcao = strtoupper($log['acao'] ?? '');
                                     if(strpos($txtAcao, 'CRIOU') !== false || strpos($txtAcao, 'CADASTROU') !== false || strpos($txtAcao, 'CONECTOU') !== false || strpos($txtAcao, 'IMPORTOU') !== false) $cor = 'success';
                                     elseif(strpos($txtAcao, 'EXCLUIU') !== false || strpos($txtAcao, 'BANIU') !== false || strpos($txtAcao, 'DESVINCULOU') !== false) $cor = 'danger';
                                     elseif(strpos($txtAcao, 'EDITOU') !== false || strpos($txtAcao, 'MOVEU') !== false) $cor = 'primary';
                                     elseif(strpos($txtAcao, 'LOGIN') !== false) $cor = 'info';
                                     elseif(strpos($txtAcao, 'STATUS') !== false) $cor = 'warning text-dark';
                                 ?>
-                                <span class="badge badge-acao bg-<?= $cor ?>"><?= $txtAcao ?></span>
+                                <span class="badge badge-acao bg-<?= $cor ?>"><?= htmlspecialchars($txtAcao) ?></span>
                             </td>
                             <td>
-                                <span class="badge badge-alvo"><?= strtoupper($log['alvo_tipo']) ?></span>
+                                <span class="badge badge-alvo"><?= htmlspecialchars(strtoupper($log['alvo_tipo'] ?? '')) ?></span>
                                 <span class="texto-alvo">
                                     <?php 
                                         if ($log['alvo_tipo'] == 'chip') {
-                                            $chip_show = !empty($log['alvo_chip_numero']) ? formatar_numero($log['alvo_chip_numero']) : "#{$log['alvo_id']}";
-                                            echo $chip_show;
+                                            $chip_show = !empty($log['alvo_chip_numero']) ? formatar_numero($log['alvo_chip_numero']) : "#" . (int)$log['alvo_id'];
+                                            echo htmlspecialchars($chip_show);
                                             
                                             if (!empty($log['alvo_equipe_nome'])) {
-                                                echo " <span class='badge badge-equipe-contexto' title='Equipe deste chip'>{$log['alvo_equipe_nome']}</span>";
+                                                echo " <span class='badge badge-equipe-contexto' title='Equipe deste chip'>" . htmlspecialchars($log['alvo_equipe_nome']) . "</span>";
                                             }
                                         } 
                                         elseif ($log['alvo_tipo'] == 'equipe') {
-                                            echo !empty($log['alvo_equipe_nome']) ? htmlspecialchars($log['alvo_equipe_nome']) : "#{$log['alvo_id']}";
+                                            echo !empty($log['alvo_equipe_nome']) ? htmlspecialchars($log['alvo_equipe_nome']) : "#" . (int)$log['alvo_id'];
                                         }
                                         elseif ($log['alvo_tipo'] == 'usuario' || $log['alvo_tipo'] == 'sistema') {
-                                            echo !empty($log['alvo_usuario_nome']) ? htmlspecialchars($log['alvo_usuario_nome']) : "#{$log['alvo_id']}";
+                                            echo !empty($log['alvo_usuario_nome']) ? htmlspecialchars($log['alvo_usuario_nome']) : "#" . (int)$log['alvo_id'];
                                         }
                                         else {
-                                            echo "#" . $log['alvo_id'];
+                                            echo "#" . (int)$log['alvo_id'];
                                         }
                                     ?>
                                 </span>
                             </td>
                             <td class="text-secondary small">
                                 <?php 
-                                    $texto = htmlspecialchars($log['detalhe']);
+                                    $texto = htmlspecialchars($log['detalhe'] ?? '');
                                     
                                     // REGEX CORRIGIDA: Detecta 8, 9, 10 ou 11 dígitos isolados e formata
                                     $texto = preg_replace_callback('/\b(\d{8,11})\b/', function($m) { 
@@ -254,7 +251,7 @@ $css_padrao = "
                                     $texto = preg_replace('/\[Estava em:(.*?)\]/', '<span class="log-meta">[Estava em:$1]</span>', $texto);
                                     
                                     if(!empty($busca)) {
-                                        $texto = preg_replace('/('.preg_quote($busca, '/').')/i', '<mark class="p-0 bg-warning fw-bold">$1</mark>', $texto);
+                                        $texto = preg_replace('/('.preg_quote(htmlspecialchars($busca), '/').')/i', '<mark class="p-0 bg-warning fw-bold">$1</mark>', $texto);
                                     }
                                     echo $texto;
                                 ?>
@@ -304,6 +301,6 @@ $css_padrao = "
 
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 </body>
 </html>
