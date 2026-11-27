@@ -39,10 +39,10 @@ Feito em **PHP 8 + SQLite**, sem framework, para rodar facilmente em um servidor
 1. Clone o repositório dentro do `htdocs` (ou da pasta pública do seu servidor):
 
    ```bash
-   git clone https://github.com/JonsCampos/gestao-chip-md.git
+   git clone https://github.com/JonsCampos/gestao-chip.git
    ```
 
-2. Abra o sistema no navegador, por exemplo `http://localhost/gestao-chip-md/`.
+2. Abra o sistema no navegador, por exemplo `http://localhost/gestao-chip/`.
 
 3. Na primeira execução o banco é criado automaticamente em `database/gestao.db`, junto com o usuário padrão:
 
